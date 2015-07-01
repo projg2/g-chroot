@@ -1,0 +1,109 @@
+#!/bin/sh
+# Gentoo chroot utility (like arch-chroot but better!)
+# (c) 2015 Michał Górny
+# 2-clause BSD licensed
+
+try() {
+	echo "\$ ${*}" >&2
+	if ! "${@}"; then
+		echo "Fatal error: ${1} failed!" >&2
+		exit 2
+	fi
+}
+
+set_mounts() {
+	# keep all mounts in the namespace
+	try mount --no-mtab --make-rslave /
+
+	# bind the system mounts
+	try mkdir -p "${1}"/dev "${1}"/proc "${1}"/sys
+	try mount --no-mtab --rbind /dev "${1}"/dev
+	try mount --no-mtab --rbind /proc "${1}"/proc
+	try mount --no-mtab --rbind /sys "${1}"/sys
+
+	# mount some useful tmpfs-es
+	try mkdir -p "${1}"/dev/shm "${1}"/tmp "${1}"/run
+	try mount --no-mtab -t tmpfs dev-shm "${1}"/dev/shm
+	try mount --no-mtab -t tmpfs tmp "${1}"/tmp
+	try mount --no-mtab -t tmpfs run "${1}"/run
+
+	# make resolver useful
+	try mkdir -p "${1}"/etc
+	try touch "${1}"/etc/resolv.conf
+	try mount --no-mtab --bind /etc/resolv.conf "${1}"/etc/resolv.conf
+
+	# sanitize mtab
+	try touch "${1}"/etc/mtab
+	try mount --no-mtab --bind /proc/self/mounts "${1}"/etc/mtab
+
+	# now find and mount some PM paths
+	local gentoo_path distdir
+
+	try mkdir -p "${1}"/var/db/repos/gentoo
+	gentoo_path=$(portageq get_repo_path / gentoo)
+	if [ -z "${gentoo_path}" ]; then
+		echo "Warning: unable to determine Gentoo repository path, will not bind" >&2
+	else
+		try mount --no-mtab --bind "${gentoo_path}" "${1}"/var/db/repos/gentoo
+	fi
+
+	try mkdir -p "${1}"/var/cache/portage/distfiles "${1}"/var/cache/portage/packages
+	distdir=$(portageq envvar DISTDIR)
+	if [ -z "${distdir}" ]; then
+		echo "Warning: unable to determine DISTDIR, will not bind" >&2
+	else
+		try mount --no-mtab --bind "${distdir}" "${1}"/var/cache/portage/distfiles
+	fi
+}
+
+main() {
+	local opt unshared
+
+	if getopts 'U' opt; then
+		case "${opt}" in
+			U)
+				unshared=1;;
+			*)
+				echo "Fatal error: unknown option -${opt}" >&2
+				exit 1;;
+		esac
+	fi
+
+	if [ "${EUID:-$(id -u)}" != "0" ]; then
+		echo "Fatal error: root privileges are required to chroot" >&2
+		exit 1
+	fi
+
+	if [ "${unshared}" != "1" ]; then
+		try exec unshare -m -u -i -- "${0}" -U "${@}"
+		echo "Fatal error: exec unshare failed!" >&2
+		exit 2
+	fi
+
+	shift "$(( OPTIND - 1 ))"
+
+	if [ -z "${1}" ]; then
+		echo "Usage: ${0} <chroot-path>" >&2
+		exit 1
+	fi
+
+	if ! [ -d "${1}" ]; then
+		echo "Fatal error: ${1} is not a directory!" >&2
+		exit 1
+	fi
+
+	# set all the mounts
+	set_mounts "${1}"
+	# set a local hostname to help distinguishing the chroot
+	try hostname "$(hostname)-${1##*/}"
+	# and chroot. wipe out the environment except for a few known-good vars
+	try exec chroot "${1}" \
+		/usr/bin/env -i \
+		HOME=/root \
+		TERM="${TERM}" \
+		/bin/sh -l
+	echo "Fatal error: exec chroot returned!" >&2
+	exit 2
+}
+
+main "${@}"
