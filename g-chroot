@@ -44,7 +44,13 @@ set_mounts() {
 	if [ -z "${gentoo_path}" ]; then
 		echo "Warning: unable to determine Gentoo repository path, will not bind" >&2
 	else
-		try mount --no-mtab --bind "${gentoo_path}" "${1}"/var/db/repos/gentoo
+		try mkdir -p "${1}"/var/db/repos
+		try mount --no-mtab -t tmpfs tmp "${1}"/var/db/repos
+		try mkdir -p "${1}"/var/db/repos/gentoo{,.lower,.upper,.work}
+		try mount --no-mtab -o bind,ro "${gentoo_path}" "${1}"/var/db/repos/gentoo.lower
+		try mount --no-mtab -t overlay gentoo-overlay \
+			-olowerdir="${1}"/var/db/repos/gentoo.lower,upperdir="${1}"/var/db/repos/gentoo.upper,workdir="${1}"/var/db/repos/gentoo.work \
+			"${1}"/var/db/repos/gentoo
 	fi
 
 	try mkdir -p "${1}"/var/cache/portage/distfiles "${1}"/var/cache/portage/packages
