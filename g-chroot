@@ -101,7 +101,9 @@ main() {
 	# set all the mounts
 	set_mounts "${1}"
 	# set a local hostname to help distinguishing the chroot
-	try hostname "$(hostname)-${1##*/}"
+	local chroot_name=${1%/}
+	chroot_name=${chroot_name##*/}
+	try hostname "$(hostname)-${chroot_name}"
 	# and chroot. wipe out the environment except for a few known-good vars
 	try exec chroot "${1}" \
 		/usr/bin/env -i \
